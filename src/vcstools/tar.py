@@ -174,8 +174,15 @@ class TarClient(VcsClientBase):
         return ''
 
     def export_repository(self, version, basepath):
-        raise VcsError('export repository not implemented for extracted tars')
-
+        # export would have us tar all files under 'version control',
+        # meaning all files from the original tar, but no manually
+        # added files. Not to be too smart, we just download original
+        # tar.
+        url = self.get_url()
+        if url():
+            (filename, headers) = urlretrieve(url, basepath + '.tar.gz')
+            return True
+        return False
 
 # backwards compatibility
 TARClient = TarClient
