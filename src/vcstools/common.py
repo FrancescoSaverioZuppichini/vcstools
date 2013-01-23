@@ -241,6 +241,8 @@ def run_shell_command(cmd, cwd=None, shell=False, us_env=True,
     :raises: VcsError on OSError
     """
     try:
+        # set env to US language since some shell commands translate
+        # output else
         env = copy.copy(os.environ)
         if us_env:
             env ["LANG"] = "en_US.UTF-8"
@@ -260,7 +262,7 @@ def run_shell_command(cmd, cwd=None, shell=False, us_env=True,
                                 stderr=stderr_target,
                                 env=env)
         # when we read output in while loop, it would not be returned
-        # in communicate()
+        # in communicate(), so we collect it when reading
         stdout_buf = []
         stderr_buf = []
         if not no_filter:
