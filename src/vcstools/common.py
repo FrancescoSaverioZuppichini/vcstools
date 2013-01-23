@@ -40,6 +40,7 @@ import logging
 import netrc
 import tempfile
 import shutil
+from signal import alarm, signal, SIGALRM, SIGKILL, SIGTERM
 
 try:
     # py3k
@@ -221,9 +222,15 @@ def _discard_line(line):
     return False
 
 
-def run_shell_command(cmd, cwd=None, shell=False, us_env=True,
-                      show_stdout=False, verbose=False,
-                      no_warn=False, no_filter=False):
+def run_shell_command(cmd,
+                      cwd=None,
+                      shell=False,
+                      us_env=True,
+                      show_stdout=False,
+                      verbose=False,
+                      no_warn=False,
+                      no_filter=False,
+                      timeout=300):
     """
     executes a command and hides the stdout output, loggs stderr
     output when command result is not zero. Make sure to sanitize
@@ -237,6 +244,7 @@ def run_shell_command(cmd, cwd=None, shell=False, us_env=True,
     :param verbose: show all output, overrides no_warn, ignored if no_filter
     :param no_filter: does not wrap stdout, so invoked command prints everything outside our knowledge
     this is DANGEROUS, as vulnerable to shell injection.
+    :param timeout: in seconds how long before interrupting the command (zero for no timeout)
     :returns: ( returncode, stdout, stderr); stdout is None if no_filter==True
     :raises: VcsError on OSError
     """
@@ -260,54 +268,74 @@ def run_shell_command(cmd, cwd=None, shell=False, us_env=True,
                                 cwd=cwd,
                                 stdout=stdout_target,
                                 stderr=stderr_target,
-                                env=env)
+                                env=env,
+                                preexec_fn=os.setsid)
         # when we read output in while loop, it would not be returned
         # in communicate(), so we collect it when reading
         stdout_buf = []
         stderr_buf = []
-        if not no_filter:
-            if (verbose or show_stdout):
-                # this loop runs until proc is done
-                # it listen to the pipe, print and stores result in buffer for returning
-                # this allows proc to run while we still can filter out output
-                # avoiding readline() because it may block forever
-                for line in iter(proc.stdout.readline, b''):
-                    line = line.decode('UTF-8')
-                    if line is not None and line != '':
-                        if verbose or not _discard_line(line):
-                            print(line),
-                            stdout_buf.append(line)
-                    if (not line or proc.returncode is not None):
-                        break
-            # stderr was swallowed in pipe, in verbose mode print lines
-            if verbose:
-                for line in iter(proc.stderr.readline, b''):
-                    line = line.decode('UTF-8')
-                    if line != '':
-                        print(line),
-                        stderr_buf.append(line)
-                    if not line:
-                        break
 
-        (stdout, stderr) = proc.communicate()
-        if stdout is not None:
-            stdout_buf.append(stdout.decode('utf-8'))
-        stdout = "\n".join(stdout_buf)
-        if stderr is not None:
-            stderr_buf.append(stderr.decode('utf-8'))
-        stderr = "\n".join(stderr_buf)
+        class Alarm(Exception):
+            pass
+
+        try:
+            if timeout > 0:
+                def alarm_handler(signum, frame):
+                    raise Alarm
+                signal(SIGALRM, alarm_handler)
+                alarm(timeout)
+            if not no_filter:
+                if (verbose or show_stdout):
+                    # this loop runs until proc is done
+                    # it listen to the pipe, print and stores result in buffer for returning
+                    # this allows proc to run while we still can filter out output
+                    # avoiding readline() because it may block forever
+                    for line in iter(proc.stdout.readline, b''):
+                        line = line.decode('UTF-8')
+                        if line is not None and line != '':
+                            if verbose or not _discard_line(line):
+                                print(line),
+                                stdout_buf.append(line)
+                        if (not line or proc.returncode is not None):
+                            break
+                # stderr was swallowed in pipe, in verbose mode print lines
+                if verbose:
+                    for line in iter(proc.stderr.readline, b''):
+                        line = line.decode('UTF-8')
+                        if line != '':
+                            print(line),
+                            stderr_buf.append(line)
+                        if not line:
+                            break
+
+            (stdout, stderr) = proc.communicate()
+            if stdout is not None:
+                stdout_buf.append(stdout.decode('utf-8'))
+            stdout = "\n".join(stdout_buf)
+            if stderr is not None:
+                stderr_buf.append(stderr.decode('utf-8'))
+            stderr = "\n".join(stderr_buf)
+            returncode = proc.returncode
+        except Alarm:
+            os.killpg(proc.pid, SIGTERM)
+            stdout = ''
+            stderr = 'Timeout after %s seconds'%timeout
+            returncode = 1
+        except KeyboardInterrupt as keyi:
+            os.killpg(proc.pid, SIGTERM)
+            raise keyi
         message = None
-        if proc.returncode != 0 and stderr is not None and stderr != '':
+        if returncode != 0 and stderr is not None and stderr != '':
             logger = logging.getLogger('vcstools')
             message = "Command failed: '%s'"%(cmd)
             if cwd is not None:
                 message += "\n run at: '%s'"%(cwd)
-            message += "\n errcode: %s:\n%s"%(proc.returncode, stderr)
+            message += "\n errcode: %s:\n%s"%(returncode, stderr)
             logger.warn(message)
         result = stdout
         if result is not None:
             result = result.rstrip()
-        return (proc.returncode, result, message)
+        return (returncode, result, message)
     except OSError as ose:
         logger = logging.getLogger('vcstools')
         message = "Command failed with OSError. '%s' <%s, %s>:\n%s"%(cmd, shell, cwd, ose)

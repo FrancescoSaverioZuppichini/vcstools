@@ -58,6 +58,12 @@ class BaseTest(unittest.TestCase):
         except VcsError:
             pass
 
+    def test_shell_timeout(self):
+        self.assertEqual((1, '', "Command failed: 'sleep 3 && echo foo'\n errcode: 1:\nTimeout after 1 seconds"),
+                         run_shell_command("sleep 3 && echo foo",
+                                           shell=True,
+                                           timeout=1))
+
     def test_shell_command(self):
         self.assertEqual((0, "", None), run_shell_command("true"))
         self.assertEqual((1, "", None), run_shell_command("false"))
