@@ -127,7 +127,6 @@ class TarClient(VcsClientBase):
                 subdir = os.path.join(tempdir, version)
             temp_tarfile.extractall(path=tempdir, members=members)
 
-
             if not os.path.isdir(subdir):
                 raise VcsError("%s is not a subdirectory\n" % subdir)
 
@@ -155,9 +154,9 @@ class TarClient(VcsClientBase):
         """
         if not self.detect_presence():
             return False
-
         if version != self.get_version():
-            sys.stderr.write("Tarball Client does not support updating with different version.\n")
+            sys.stderr.write("Tarball Client does not support updating with different version '%s' != '%s'\n"
+                             % (version, self.get_version()))
             return False
 
         return True
