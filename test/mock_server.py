@@ -58,8 +58,10 @@ def start_mock_server(file_content):
                     stream = BytesIO(file_content)
                     while True:
                         data = stream.read(self.CHUNK_SIZE)
-                        self.wfile.write(b"%X\r\n%s\r\n" % (len(data), data))
-
+                        # python3.[0-4] cannot easily format bytes (see PEP 461)
+                        self.wfile.write(("%X\r\n" % len(data)).encode('ascii'))
+                        self.wfile.write(data)
+                        self.wfile.write(b"\r\n")
                         # If there's no more data to read, stop streaming
                         if not data:
                             break
